@@ -17,6 +17,25 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
+@app.get("/")
+def root():
+    return {
+        "name": "Peer Review Arena",
+        "description": "Two AI agents independently review code, then learn from each other's findings.",
+        "status": "running",
+        "endpoints": {
+            "GET  /health": "Health check",
+            "POST /reset": "Start a new episode",
+            "POST /step": "Submit an action",
+            "GET  /state": "Get episode state",
+        },
+        "tasks": ["bug_hunt", "security_audit", "architecture_review"],
+        "agents": ["A", "B"],
+        "phases": ["round_1", "cross_review", "round_2", "finished"],
+        "docs": "/docs",
+    }
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "peer_review_arena"}
