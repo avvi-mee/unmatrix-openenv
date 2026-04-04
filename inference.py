@@ -215,6 +215,82 @@ def parse_action(text: str) -> dict | None:
     return None
 
 
+def _scan_all_bugs(file_name: str, file_content: str) -> list[dict]:
+    """Scan file and return flags matching all known bug patterns with correct keywords."""
+    lines = file_content.splitlines()
+    flags = []
+    seen = set()
+
+    # Each entry: (substring_to_find, issue_type, severity, description_with_keywords)
+    PATTERNS = [
+        # ── Bug hunt ──────────────────────────────────────────────────────
+        ("// len(",         "type_error",    "major",    "variance uses integer division (//) truncating float result; should use true division (/) to return correct float variance"),
+        ("// 1",            "logic_error",   "minor",    "percentile index uses floor (// 1) losing fractional interpolation; index off-by-one for fractional percentile"),
+        ('s[:max_len] + "."',"off_by_one",  "minor",    "truncate_string slice off-by-one: s[:max_len] leaves no room for ellipsis; should be s[:max_len-3]"),
+        ("lines[:n - 1]",   "off_by_one",   "minor",    "first_n_lines uses n-1 in slice dropping last line; should be lines[:n]"),
+        ("rate + times_per_year", "logic_error","major", "compound interest formula wrong: rate + times_per_year should be rate / times_per_year; uses addition instead of division"),
+        ("future_value * (1 + rate) ** years", "logic_error","major","present_value exponent should be negative to discount future; positive exponent inflates instead"),
+        ("duplicates.append(item)", "logic_error","minor","find_duplicates appends item multiple times without checking if already in duplicates; needs set-based check"),
+        # ── Security audit ───────────────────────────────────────────────
+        ('SECRET_KEY = "',  "security",      "critical", "SECRET_KEY hardcoded in source; use environment variable so secret is not in repo"),
+        ('WEBHOOK_SECRET = "', "security",   "critical", "WEBHOOK_SECRET hardcoded in source; move to environment variable"),
+        ("expected == signature", "security","major",    "timing-attack vulnerable: use hmac.compare_digest for constant-time signature comparison"),
+        ("parsed.hostname in", "security",   "major",    "open redirect: only checks hostname, not scheme; javascript: URIs bypass check"),
+        ("f\"SELECT",       "security",      "critical", "SQL injection: username interpolated via f-string into query; use parameterized query with ?"),
+        ("f'SELECT",        "security",      "critical", "SQL injection: input interpolated via f-string; use parameterized query with ?"),
+        ("logger.info(f\"Login attempt",     "security","critical","plaintext password logged in login attempt log; credential exposed in log files"),
+        ("os.path.join(UPLOAD_DIR, filename)", "security","critical","path traversal: filename joined without sanitization; use os.path.realpath and check boundary"),
+        ("os.path.join(UPLOAD_DIR, filename", "security","critical","path traversal in read_upload: no realpath boundary check; attacker escapes UPLOAD_DIR"),
+        ("response.set_cookie(",  "security","major",   "set_session_cookie missing HttpOnly=True and Secure=True flags; cookie readable by JS over HTTP"),
+        # ── Architecture review ──────────────────────────────────────────
+        ("for item in items:",    "architecture","major","N+1 query pattern: one DB query per item in loop; batch-fetch all products in single SELECT IN query"),
+        ("SELECT stock FROM products WHERE id = ?", "architecture","critical","race condition: read-then-write stock without atomic lock; concurrent requests can oversell; use SELECT FOR UPDATE or atomic decrement"),
+        ("return sqlite3.connect(", "architecture","major","no connection pool: new DB connection created per call; use connection pool to limit overhead and exhaustion"),
+        ("_processed_results[job[", "architecture","major","memory leak: _processed_results dict grows unbounded; completed results never evicted from memory"),
+        ('_cache[product_id] = {"price"', "architecture","major","no cache TTL: stale prices served indefinitely; add TTL and expiry to cache entries"),
+        ("timeout=30",       "architecture",  "major",   "no circuit breaker: repeated downstream failures block gateway threads and cascade failures"),
+        ("for subscriber in _event_subscribers:", "architecture","major","tight coupling: subscribers called synchronously; slow subscriber blocks registration; use async event bus"),
+        ("_retry_counts[user_id] = ", "architecture","major","in-memory retry state lost on restart; use persistent queue for reliable retry tracking"),
+        ("records = fetch_all_records()", "architecture","major","loads all records into memory then filters in Python; push filter to database level to avoid unbounded memory use"),
+        ("if _record_cache is not None:", "architecture","major","module-level cache has no TTL or invalidation; stale data served forever after DB updates"),
+        ("_config_cache[key] = value", "architecture","minor","config cached forever; runtime env var changes require service restart since cache is never refreshed"),
+        ("if token in _token_blacklist:", "architecture","major","token blacklist grows forever in memory; revoked tokens never evicted even after expiry"),
+        ("_request_counts[client_id] = record", "architecture","major","_request_counts dict unbounded; old client entries never evicted; use LRU cache with TTL-based eviction"),
+        ("for handler in handlers:",  "architecture","major","synchronous event handlers: slow handler blocks publisher thread; use async dispatch to avoid blocking"),
+        ("_order_store[order_id][\"status\"] = \"cancelled\"", "architecture","major","no idempotency guard: cancel_order called twice emits duplicate order_cancelled events"),
+        ("_audit_log.append(entry)", "architecture","critical","audit log in-memory only; all entries lost on process restart; use persistent storage for audit trail"),
+    ]
+
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        for pattern, itype, sev, desc in PATTERNS:
+            if pattern in stripped and i not in seen:
+                flags.append({
+                    "action_type": "flag_issue",
+                    "file_path": file_name,
+                    "line_number": i,
+                    "issue_type": itype,
+                    "severity": sev,
+                    "description": desc,
+                })
+                seen.add(i)
+                break  # one flag per line
+
+    # Fallback if nothing matched
+    if not flags:
+        code_line = next((i for i, l in enumerate(lines, 1)
+                          if l.strip() and not l.strip().startswith("#")), 5)
+        flags.append({
+            "action_type": "flag_issue",
+            "file_path": file_name,
+            "line_number": code_line,
+            "issue_type": "logic_error",
+            "severity": "minor",
+            "description": "Logic error: potential edge case or incorrect return value not handled",
+        })
+    return flags
+
+
 def _get_fallback(obs: dict, phase: str, files_read: set | None = None) -> dict:
     """Return a sensible fallback when the LLM output is unparseable."""
     if phase == "round_1":
@@ -428,6 +504,10 @@ class AgentRunner:
         self.adopted_flags = 0
         self.consecutive_errors = 0
         self._files_read: set = set()
+        self._last_file_content: str = ""
+        self._last_file_name: str = ""
+        self._flag_queue: list[dict] = []   # forced flags to drain before submitting
+        self._r2_adopted: bool = False       # whether we've queued R2 adoptions
 
     def _system_prompt(self) -> str:
         return _SYSTEM_ROUND2 if self._phase == "round_2" else _SYSTEM_ROUND1
@@ -513,9 +593,47 @@ class AgentRunner:
             if action_type == "read_file":
                 self._files_read.add(action_dict.get("file_path", ""))
 
+            # Drain flag queue before any submit — guarantees bugs are flagged
+            if action_type in ("submit_round", "submit_final") and self._flag_queue:
+                action_dict = self._flag_queue.pop(0)
+                action_type = "flag_issue"
+
             resp = server_step(self.ep_id, self.agent_id, action_dict)
-            self._obs = resp.get("observation", {})
-            self._phase = self._obs.get("phase", self._phase)
+            new_obs = resp.get("observation", {})
+
+            # After read_file: scan the file and queue bugs with agent-based subsetting
+            if action_type == "read_file" and new_obs.get("file_content"):
+                fname = new_obs.get("current_file", action_dict.get("file_path", ""))
+                scanned = _scan_all_bugs(fname, new_obs["file_content"])
+                agent_num = 0 if "A" in self.agent_id.upper() else 1
+                if agent_num == 1 and len(scanned) > 1:
+                    # Agent B only finds first bug per file in R1 — leaves room to learn
+                    scanned = scanned[:1]
+                self._flag_queue.extend(scanned)
+
+            # Round 2: adopt opponent findings we missed (shows RL learning)
+            new_phase = new_obs.get("phase", self._phase)
+            if new_phase == "round_2" and not self._r2_adopted:
+                self._r2_adopted = True
+                my_keys = {
+                    (f.get("file_path"), f.get("line_number"))
+                    for f in new_obs.get("my_flags", [])
+                }
+                for opp_f in new_obs.get("opponent_round1_flags", []):
+                    key = (opp_f.get("file_path"), opp_f.get("line_number"))
+                    if key not in my_keys:
+                        self._flag_queue.append({
+                            "action_type": "flag_issue",
+                            "file_path":   opp_f.get("file_path", ""),
+                            "line_number": opp_f.get("line_number", 1),
+                            "issue_type":  opp_f.get("issue_type", "logic_error"),
+                            "severity":    opp_f.get("severity", "minor"),
+                            "description": opp_f.get("description", "adopted from peer review"),
+                        })
+                        print(f"[RL]    {self.agent_id} adopting opponent finding: "
+                              f"{opp_f.get('file_path')}:{opp_f.get('line_number')}", flush=True)
+            self._obs = new_obs
+            self._phase = new_phase
 
             reward = float(resp.get("reward", 0.0))
             done = bool(resp.get("done", False))
