@@ -5,10 +5,11 @@ Usage:
     python inference.py
 
 Environment variables:
-    HF_TOKEN         HuggingFace token for the inference router
-    API_BASE_URL     OpenAI-compatible base URL (default: HF router)
-    MODEL_NAME       Model to use for both agents
-    ENV_SERVER_URL   URL of the running FastAPI environment server
+    HF_TOKEN           HuggingFace token for the inference router (required)
+    API_BASE_URL       OpenAI-compatible base URL (default: HF router)
+    MODEL_NAME         Model to use for both agents (default: Qwen2.5-Coder-7B-Instruct)
+    LOCAL_IMAGE_NAME   Docker image name for local deployment (optional)
+    ENV_SERVER_URL     URL of the running FastAPI environment server
 """
 import argparse
 import io
@@ -30,9 +31,10 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
+HF_TOKEN = os.environ.get("HF_TOKEN")
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.environ.get("MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
+MODEL_NAME = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-Coder-7B-Instruct")
+LOCAL_IMAGE_NAME = os.environ.get("LOCAL_IMAGE_NAME")
 ENV_SERVER_URL = os.environ.get("ENV_SERVER_URL", "http://localhost:8000")
 
 TASKS = [
@@ -782,10 +784,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
     args = parser.parse_args()
 
-    HF_TOKEN = os.environ.get("HF_TOKEN", "")
-    API_BASE_URL = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
-    MODEL_NAME = os.environ.get("MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
-    llm = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN or "dummy")
+    # env vars already read at module level (HF_TOKEN, API_BASE_URL, MODEL_NAME, LOCAL_IMAGE_NAME)
     if args.random:
         print("[MODE] Random agents — no LLM calls, scores will vary between 0 and 1")
     print_header()
