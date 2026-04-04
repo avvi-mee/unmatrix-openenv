@@ -46,3 +46,12 @@ def state(episode_id: str = "default", agent_id: str = "A"):
         return env_module.get_state(episode_id, agent_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+def main():
+    import uvicorn
+    uvicorn.run("server.app:app", host="0.0.0.0", port=7860, workers=1)
+
+
+if __name__ == "__main__":
+    main()
