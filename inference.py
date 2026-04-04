@@ -215,12 +215,17 @@ def parse_action(text: str) -> dict | None:
     return None
 
 
-def _get_fallback(obs: dict, phase: str) -> dict:
+def _get_fallback(obs: dict, phase: str, files_read: set | None = None) -> dict:
     """Return a sensible fallback when the LLM output is unparseable."""
-    if phase in ("round_1", "cross_review"):
+    if phase == "round_1":
         files = obs.get("files_available", [])
-        if files:
-            return {"action_type": "read_file", "file_path": files[0]}
+        # Read next unread file; if all read, submit round
+        unread = [f for f in files if f not in (files_read or set())]
+        if unread:
+            return {"action_type": "read_file", "file_path": unread[0]}
+        return {"action_type": "submit_round"}
+    if phase == "cross_review":
+        return {"action_type": "submit_round"}
     return {"action_type": "submit_final"}
 
 
@@ -370,14 +375,18 @@ def compute_task_score(bugs_found: int, total_bugs: int,
 # ── Agent runner ───────────────────────────────────────────────────────────────
 
 _SYSTEM_ROUND1 = (
-    "You are an expert code reviewer. You are in ROUND 1: independently review the provided code. "
-    "Your goal is to find as many real bugs/issues as possible. "
-    "For each action, output ONLY a JSON object (no extra text) matching one of these schemas:\n\n"
-    '1. Read a file:       {"action_type": "read_file", "file_path": "<name>"}\n'
-    '2. Flag an issue:     {"action_type": "flag_issue", "file_path": "<name>", "line_number": <int>, '
-    '"issue_type": "<type>", "severity": "critical|major|minor", "description": "<clear explanation>"}\n'
-    '3. Submit round 1:    {"action_type": "submit_round"}\n\n'
-    "Read each file first, then flag issues, then submit. Use submit_round when done with round 1."
+    "You are an expert code reviewer in ROUND 1. Find ALL bugs/security issues in the code.\n\n"
+    "RULES:\n"
+    "- Output ONLY a single JSON object per response — no prose, no markdown, no explanation\n"
+    "- DO NOT read the same file twice\n"
+    "- After reading ALL files, flag every issue you found, then submit_round\n"
+    "- If you have already read all files, do NOT read_file again — flag issues instead\n\n"
+    "Actions:\n"
+    '{"action_type": "read_file", "file_path": "filename.py"}\n'
+    '{"action_type": "flag_issue", "file_path": "filename.py", "line_number": 10, '
+    '"issue_type": "security", "severity": "critical", "description": "SQL injection via f-string"}\n'
+    '{"action_type": "submit_round"}\n\n'
+    "IMPORTANT: One JSON object only. No other text."
 )
 
 _SYSTEM_ROUND2 = (
@@ -418,6 +427,7 @@ class AgentRunner:
         self.flags_submitted = 0
         self.adopted_flags = 0
         self.consecutive_errors = 0
+        self._files_read: set = set()
 
     def _system_prompt(self) -> str:
         return _SYSTEM_ROUND2 if self._phase == "round_2" else _SYSTEM_ROUND1
@@ -431,6 +441,8 @@ class AgentRunner:
         ]
         if obs.get("file_content"):
             lines.append(f"\nFile: {obs.get('current_file', '')}\n```\n{obs['file_content']}\n```")
+        if self._files_read:
+            lines.append(f"\nAlready read (do NOT read again): {sorted(self._files_read)}")
         if obs.get("my_flags"):
             lines.append(f"\nYour current flags ({len(obs['my_flags'])}):")
             for f in obs["my_flags"]:
@@ -489,13 +501,17 @@ class AgentRunner:
             else:
                 llm_response = self._call_llm()
                 self.messages.append({"role": "assistant", "content": llm_response})
-                action_dict = parse_action(llm_response) or _get_fallback(self._obs, self._phase)
+                action_dict = parse_action(llm_response) or _get_fallback(self._obs, self._phase, self._files_read)
                 # Guard: don't submit_final with 0 flags in round_1
                 if (action_dict.get("action_type") == "submit_final"
                         and self._phase == "round_1"
                         and not self._obs.get("my_flags")):
                     action_dict = _get_fallback(self._obs, self._phase)
             action_type = action_dict.get("action_type", "submit_final")
+
+            # Track which files have been read to prevent loops
+            if action_type == "read_file":
+                self._files_read.add(action_dict.get("file_path", ""))
 
             resp = server_step(self.ep_id, self.agent_id, action_dict)
             self._obs = resp.get("observation", {})
