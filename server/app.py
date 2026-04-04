@@ -1,5 +1,7 @@
 """FastAPI application for Peer Review Arena."""
-from fastapi import FastAPI, HTTPException, Request
+from typing import Optional
+
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 import server.environment as env_module
@@ -42,7 +44,9 @@ def health():
 
 
 @app.post("/reset", response_model=EnvResponse)
-def reset(req: ResetRequest):
+def reset(req: Optional[ResetRequest] = Body(default=None)):
+    if req is None:
+        req = ResetRequest()
     try:
         return env_module.reset(req.episode_id, req.task, req.agent_id, req.seed)
     except ValueError as e:
