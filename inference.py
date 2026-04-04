@@ -56,13 +56,14 @@ W_LEARN   = 0.15   # bugs gained in Round 2 vs Round 1 / total bugs
 SEP = "=" * 56
 
 
+BENCHMARK = "peer_review_arena"
+
+
 def print_header() -> None:
     print(SEP)
     print("Peer Review Arena — Inference Run")
     print(f"Server : {ENV_SERVER_URL}")
     print(f"Model  : {MODEL_NAME}")
-    if "llama" in MODEL_NAME.lower():
-        print("Hint   : To use Qwen: $env:MODEL_NAME='Qwen/Qwen2.5-72B-Instruct'")
     print("Provider: HF Router")
     print(SEP)
     print(flush=True)
@@ -74,21 +75,36 @@ def print_task_header(label: str, ep_id: str) -> None:
     print(SEP, flush=True)
 
 
+# ── Mandatory stdout format ────────────────────────────────────────────────────
+
+def log_start(task: str) -> None:
+    print(f"[START] task={task} env={BENCHMARK} model={MODEL_NAME}", flush=True)
+
+
+def log_step(step: int, action: str, reward: float, done: bool, error=None) -> None:
+    err = error if error else "null"
+    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={err}",
+          flush=True)
+
+
+def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
+          flush=True)
+
+
+# ── Legacy agent-level helpers (kept for orchestrator report) ─────────────────
+
 def print_agent_start(agent_id: str, ep_id: str, task: str) -> None:
-    print(f"[START] {agent_id} episode={ep_id} task={task}", flush=True)
+    pass  # now handled by log_start once per episode
 
 
 def print_step(agent_id: str, step: int, action: str, result: str, done: bool, error) -> None:
-    err = error if error else "null"
-    done_str = str(done).lower()
-    print(
-        f"[STEP]  {agent_id} step={step} action={action} result={result} done={done_str} error={err}",
-        flush=True,
-    )
+    pass  # now handled by log_step with global counter
 
 
 def print_agent_end(agent_id: str, ep_id: str, score: float, bugs_found: int, total_bugs: int) -> None:
-    print(f"[END]   {agent_id} episode={ep_id} score={score:.4f} bugs={bugs_found}/{total_bugs}", flush=True)
+    pass  # now handled by log_end once per episode
 
 
 def print_orchestrator_report(
@@ -710,36 +726,44 @@ def run_episode(task_name: str, label: str, ep_id: str, seed: int = 42,
     agent_a.initialize(seed)
     agent_b.initialize(seed)
 
+    # Emit mandatory [START]
+    log_start(task=task_name)
+
     safety = MAX_STEPS_PER_AGENT * 2 + 10
     guard = 0
     step_delay = 0 if use_random else 2
+    global_step = 0
+    all_rewards: list[float] = []
 
     while not (agent_a.done and agent_b.done):
         guard += 1
         if guard > safety:
             break
 
-        if not agent_a.done:
-            agent_a.take_step()
+        for agent in (agent_a, agent_b):
+            if agent.done:
+                continue
+            action_type, reward, done, error = agent.take_step()
+            global_step += 1
+            all_rewards.append(reward)
+            # Emit mandatory [STEP]
+            log_step(global_step, action_type, reward, done, error)
             if step_delay:
                 time.sleep(step_delay)
-
-        if not agent_b.done:
-            agent_b.take_step()
-            if step_delay:
-                time.sleep(step_delay)
-
-    print_agent_end("agent_A", ep_id, agent_a.final_score, agent_a.bugs_found, agent_a.total_bugs)
-    print_agent_end("agent_B", ep_id, agent_b.final_score, agent_b.bugs_found, agent_b.total_bugs)
 
     a_score = compute_task_score(agent_a.bugs_found, agent_a.total_bugs,
                                  agent_a.round1_score, agent_b.bugs_found)
     b_score = compute_task_score(agent_b.bugs_found, agent_b.total_bugs,
                                  agent_b.round1_score, agent_a.bugs_found)
 
+    best_score = max(a_score, b_score)
+    success = best_score >= 0.3
+
+    # Emit mandatory [END]
+    log_end(success=success, steps=global_step, score=best_score, rewards=all_rewards)
+
     winner = determine_winner(agent_a, agent_b, a_score, b_score)
     print(f"\nWINNER: {winner}\n")
-
     print_orchestrator_report(task_name, agent_a, agent_b, a_score, b_score, winner)
     print()
 
