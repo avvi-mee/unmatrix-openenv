@@ -1,0 +1,10 @@
+spec_version: 1
+name: peer_review_arena
+version: "1.0.0"
+description: >
+  Two anonymous AI agents independently review the same codebase,
+  then each sees the other's findings and improves.
+type: space
+runtime: fastapi
+app: server.app:app
+port: 7860
