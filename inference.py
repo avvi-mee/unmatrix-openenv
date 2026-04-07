@@ -21,6 +21,8 @@ import sys
 import time
 import uuid
 
+import threading
+
 import requests
 from openai import OpenAI
 
@@ -36,6 +38,47 @@ API_BASE_URL = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1"
 MODEL_NAME = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-Coder-7B-Instruct")
 LOCAL_IMAGE_NAME = os.environ.get("LOCAL_IMAGE_NAME")
 ENV_SERVER_URL = os.environ.get("ENV_SERVER_URL", "http://localhost:8000")
+
+
+# ── Auto-start environment server if not already running ──────────────────────
+
+def _ensure_server() -> None:
+    """Start the FastAPI env server in a daemon thread if nothing is listening."""
+    # Quick probe — if server already up, return immediately
+    try:
+        requests.get(f"{ENV_SERVER_URL}/health", timeout=2)
+        print(f"[SERVER] Already running at {ENV_SERVER_URL}", flush=True)
+        return
+    except Exception:
+        pass
+
+    # Parse port from ENV_SERVER_URL (default 8000)
+    from urllib.parse import urlparse
+    parsed = urlparse(ENV_SERVER_URL)
+    host = parsed.hostname or "0.0.0.0"
+    port = parsed.port or 8000
+
+    print(f"[SERVER] Starting environment server on {host}:{port} ...", flush=True)
+
+    def _run():
+        import uvicorn
+        uvicorn.run("server.app:app", host=host, port=port, log_level="warning")
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+    # Wait up to 15 seconds for it to become healthy
+    for i in range(30):
+        try:
+            r = requests.get(f"{ENV_SERVER_URL}/health", timeout=2)
+            if r.status_code == 200:
+                print(f"[SERVER] Ready after {(i+1)*0.5:.1f}s", flush=True)
+                return
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+    raise RuntimeError(f"Environment server failed to start at {ENV_SERVER_URL}")
 
 TASKS = [
     ("bug_hunt",            "EASY",   "Easy"),
@@ -783,6 +826,9 @@ def main() -> None:
                         help="Use random agents (no LLM needed) — produces varied non-zero scores")
     parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42)")
     args = parser.parse_args()
+
+    # Ensure the environment server is running (auto-start if needed)
+    _ensure_server()
 
     # env vars already read at module level (HF_TOKEN, API_BASE_URL, MODEL_NAME, LOCAL_IMAGE_NAME)
     if args.random:
