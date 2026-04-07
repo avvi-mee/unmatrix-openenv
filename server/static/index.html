@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Peer Review Arena</title>
+<style>
+/* ── Reset & Base ──────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #e6edf3;
+  --text-dim: #8b949e; --blue: #58a6ff; --red: #f85149; --green: #3fb950;
+  --orange: #d29922; --purple: #bc8cff;
+  --gutter: #21262d; --line-hover: #1c2128;
+}
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; }
+button { cursor: pointer; border: 1px solid var(--border); background: var(--card); color: var(--text); padding: 8px 18px; border-radius: 6px; font-size: 14px; transition: all .15s; }
+button:hover { border-color: var(--blue); background: #1c2128; }
+button:disabled { opacity: .4; cursor: not-allowed; }
+button.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+button.primary:hover { background: #4090e0; }
+button.danger { background: var(--red); color: #fff; border-color: var(--red); }
+
+/* ── Screens ───────────────────────────────────────────────────────────── */
+.screen { display: none; height: 100vh; }
+.screen.active { display: flex; flex-direction: column; }
+
+/* ── Lobby ─────────────────────────────────────────────────────────────── */
+#lobby { align-items: center; justify-content: center; gap: 28px; text-align: center; }
+#lobby h1 { font-size: 48px; background: linear-gradient(135deg, var(--blue), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: -1px; }
+#lobby .subtitle { color: var(--text-dim); font-size: 18px; max-width: 520px; line-height: 1.5; }
+.task-picker { display: flex; gap: 12px; margin-top: 8px; }
+.task-btn { padding: 14px 22px; border-radius: 10px; text-align: left; min-width: 170px; transition: all .2s; }
+.task-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+.task-btn.selected { border-color: var(--blue); background: #1a2332; }
+.task-btn .label { font-weight: 600; font-size: 15px; }
+.task-btn .diff { font-size: 12px; margin-top: 4px; }
+.diff-easy { color: var(--green); }
+.diff-med { color: var(--orange); }
+.diff-hard { color: var(--red); }
+.mode-picker { display: flex; gap: 14px; margin-top: 12px; }
+.mode-picker button { padding: 12px 32px; font-size: 16px; font-weight: 600; border-radius: 10px; }
+
+/* ── Match Screen ──────────────────────────────────────────────────────── */
+#match { height: 100vh; }
+.match-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: var(--card); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.match-header .phase-badge { background: var(--blue); color: #fff; padding: 4px 12px; border-radius: 20px; font-weight: 600; font-size: 13px; }
+.match-header .step-info { color: var(--text-dim); font-size: 13px; }
+.match-body { display: flex; flex: 1; overflow: hidden; }
+
+/* Agent panels */
+.agent-panel { width: 220px; padding: 16px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 12px; flex-shrink: 0; overflow-y: auto; }
+.agent-panel.right { border-right: none; border-left: 1px solid var(--border); }
+.agent-panel h3 { font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
+.agent-panel h3.blue { color: var(--blue); }
+.agent-panel h3.red { color: var(--red); }
+.agent-stat { font-size: 13px; color: var(--text-dim); }
+.agent-stat b { color: var(--text); }
+.flag-list { display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow-y: auto; }
+.flag-chip { font-size: 11px; padding: 3px 8px; border-radius: 4px; background: var(--gutter); border-left: 3px solid var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flag-chip.critical { border-left-color: var(--red); }
+.flag-chip.major { border-left-color: var(--orange); }
+.flag-chip.minor { border-left-color: var(--text-dim); }
+
+/* Code viewer */
+.code-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.file-tabs { display: flex; gap: 0; background: var(--card); border-bottom: 1px solid var(--border); flex-shrink: 0; overflow-x: auto; }
+.file-tab { padding: 8px 16px; font-size: 13px; font-family: 'Consolas', 'Monaco', monospace; color: var(--text-dim); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
+.file-tab:hover { color: var(--text); background: var(--line-hover); }
+.file-tab.active { color: var(--text); border-bottom-color: var(--blue); background: var(--bg); }
+.code-viewer { flex: 1; overflow: auto; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 13px; line-height: 1.6; }
+.code-line { display: flex; min-height: 21px; }
+.code-line:hover { background: var(--line-hover); }
+.code-line.flagged-a { background: rgba(88,166,255,.08); }
+.code-line.flagged-b { background: rgba(248,81,73,.08); }
+.code-line.flagged-truth { background: rgba(63,185,80,.08); }
+.code-line.clickable { cursor: crosshair; }
+.gutter { width: 60px; min-width: 60px; text-align: right; padding-right: 12px; color: var(--text-dim); user-select: none; background: var(--gutter); position: relative; flex-shrink: 0; }
+.gutter .markers { position: absolute; left: 4px; top: 0; bottom: 0; display: flex; align-items: center; gap: 2px; }
+.marker { width: 8px; height: 8px; border-radius: 50%; }
+.marker.blue { background: var(--blue); }
+.marker.red { background: var(--red); }
+.marker.green { background: var(--green); }
+.code-text { padding-left: 12px; white-space: pre; flex: 1; }
+
+/* Action bar (play mode) */
+.action-bar { display: none; padding: 10px 20px; background: var(--card); border-top: 1px solid var(--border); gap: 10px; align-items: center; flex-shrink: 0; }
+.action-bar.visible { display: flex; }
+.action-bar .spacer { flex: 1; }
+.action-bar .status-text { color: var(--text-dim); font-size: 13px; }
+
+/* Flag dialog */
+.flag-dialog-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 100; align-items: center; justify-content: center; }
+.flag-dialog-overlay.visible { display: flex; }
+.flag-dialog { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 400px; max-width: 90vw; }
+.flag-dialog h3 { margin-bottom: 16px; font-size: 16px; }
+.flag-dialog .field { margin-bottom: 14px; }
+.flag-dialog label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .5px; }
+.severity-pills { display: flex; gap: 8px; }
+.sev-pill { padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; border: 2px solid var(--border); background: transparent; color: var(--text); }
+.sev-pill:hover { opacity: .9; }
+.sev-pill.selected { color: #fff; }
+.sev-pill[data-sev="critical"].selected { background: var(--red); border-color: var(--red); }
+.sev-pill[data-sev="major"].selected { background: var(--orange); border-color: var(--orange); }
+.sev-pill[data-sev="minor"].selected { background: var(--text-dim); border-color: var(--text-dim); }
+.flag-dialog textarea { width: 100%; height: 70px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 8px; font-size: 13px; resize: vertical; }
+.flag-dialog .actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* Phase overlay */
+.phase-overlay { display: none; position: fixed; inset: 0; background: rgba(13,17,23,.92); z-index: 200; align-items: center; justify-content: center; flex-direction: column; gap: 12px; }
+.phase-overlay.visible { display: flex; }
+.phase-overlay h2 { font-size: 42px; animation: scaleIn .4s ease-out; }
+.phase-overlay p { color: var(--text-dim); font-size: 18px; animation: scaleIn .4s ease-out .1s both; }
+@keyframes scaleIn { from { transform: scale(.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+/* ── Scoreboard ────────────────────────────────────────────────────────── */
+#scoreboard { align-items: center; justify-content: center; gap: 24px; text-align: center; }
+#scoreboard h2 { font-size: 36px; }
+.score-bars { display: flex; gap: 40px; align-items: flex-end; justify-content: center; margin: 12px 0; }
+.score-col { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.score-col .agent-label { font-size: 14px; font-weight: 600; text-transform: uppercase; }
+.score-col .agent-label.blue { color: var(--blue); }
+.score-col .agent-label.red { color: var(--red); }
+.bar-track { width: 80px; height: 200px; background: var(--gutter); border-radius: 8px; position: relative; overflow: hidden; }
+.bar-fill { position: absolute; bottom: 0; width: 100%; border-radius: 8px; transition: height 1.2s ease-out; }
+.bar-fill.blue { background: linear-gradient(180deg, var(--blue), #2563eb); }
+.bar-fill.red { background: linear-gradient(180deg, var(--red), #b91c1c); }
+.score-val { font-size: 28px; font-weight: 700; }
+.winner-text { font-size: 22px; margin: 4px 0; }
+.winner-text .winner-name { font-weight: 700; }
+.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 30px; text-align: left; font-size: 14px; color: var(--text-dim); margin: 10px 0; }
+.stats-grid b { color: var(--text); }
+.scoreboard-actions { display: flex; gap: 14px; margin-top: 8px; }
+
+/* ── Log panel ─────────────────────────────────────────────────────────── */
+.log-panel { height: 120px; overflow-y: auto; background: var(--card); border-top: 1px solid var(--border); padding: 8px 16px; font-family: monospace; font-size: 12px; color: var(--text-dim); flex-shrink: 0; }
+.log-entry { margin: 2px 0; }
+.log-entry .agent-a { color: var(--blue); }
+.log-entry .agent-b { color: var(--red); }
+
+/* ── Responsive ────────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .agent-panel { width: 160px; padding: 10px; }
+  .task-picker { flex-direction: column; }
+}
+@media (max-width: 650px) {
+  .match-body { flex-direction: column; }
+  .agent-panel { width: 100%; flex-direction: row; border-right: none; border-bottom: 1px solid var(--border); overflow-x: auto; }
+  .agent-panel.right { border-left: none; border-top: 1px solid var(--border); }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════ LOBBY ═══════════ -->
+<div id="lobby" class="screen active">
+  <h1>Peer Review Arena</h1>
+  <p class="subtitle">Two AI agents independently review code for bugs, then learn from each other's findings. Who finds more?</p>
+  <div class="task-picker">
+    <button class="task-btn selected" data-task="bug_hunt" onclick="App.selectTask(this)">
+      <div class="label">Bug Hunt</div>
+      <div class="diff diff-easy">EASY</div>
+    </button>
+    <button class="task-btn" data-task="security_audit" onclick="App.selectTask(this)">
+      <div class="label">Security Audit</div>
+      <div class="diff diff-med">MEDIUM</div>
+    </button>
+    <button class="task-btn" data-task="architecture_review" onclick="App.selectTask(this)">
+      <div class="label">Architecture Review</div>
+      <div class="diff diff-hard">HARD</div>
+    </button>
+  </div>
+  <div class="mode-picker">
+    <button class="primary" onclick="App.match.start()">Watch Match</button>
+    <button onclick="App.play.start()">Play as Agent A</button>
+  </div>
+</div>
+
+<!-- ═══════════ MATCH ═══════════ -->
+<div id="match" class="screen">
+  <div class="match-header">
+    <span class="phase-badge" id="phaseBadge">ROUND 1</span>
+    <span id="taskTitle" style="font-weight:600;"></span>
+    <span class="step-info" id="stepInfo">Steps: 0</span>
+  </div>
+  <div class="match-body">
+    <!-- Agent A Panel -->
+    <div class="agent-panel" id="panelA">
+      <h3 class="blue">Agent A</h3>
+      <div class="agent-stat">Flags: <b id="flagCountA">0</b></div>
+      <div class="agent-stat">Status: <b id="statusA">reviewing</b></div>
+      <div class="flag-list" id="flagListA"></div>
+    </div>
+    <!-- Code Viewer -->
+    <div class="code-area">
+      <div class="file-tabs" id="fileTabs"></div>
+      <div class="code-viewer" id="codeViewer"></div>
+    </div>
+    <!-- Agent B Panel -->
+    <div class="agent-panel right" id="panelB">
+      <h3 class="red">Agent B</h3>
+      <div class="agent-stat">Flags: <b id="flagCountB">0</b></div>
+      <div class="agent-stat">Status: <b id="statusB">reviewing</b></div>
+      <div class="flag-list" id="flagListB"></div>
+    </div>
+  </div>
+  <!-- Action Bar (play mode) -->
+  <div class="action-bar" id="actionBar">
+    <span class="status-text" id="playStatus">Click a file tab to read it, then click code lines to flag bugs.</span>
+    <span class="spacer"></span>
+    <button onclick="App.play.submitRound()" id="btnSubmitRound">Submit Round</button>
+    <button class="danger" onclick="App.play.submitFinal()" id="btnSubmitFinal">Submit Final</button>
+  </div>
+  <!-- Log -->
+  <div class="log-panel" id="logPanel"></div>
+</div>
+
+<!-- ═══════════ SCOREBOARD ═══════════ -->
+<div id="scoreboard" class="screen">
+  <h2>Match Complete</h2>
+  <div class="score-bars">
+    <div class="score-col">
+      <div class="score-val" id="scoreValA">0%</div>
+      <div class="bar-track"><div class="bar-fill blue" id="barA" style="height:0%"></div></div>
+      <div class="agent-label blue">Agent A</div>
+    </div>
+    <div class="score-col">
+      <div class="score-val" id="scoreValB">0%</div>
+      <div class="bar-track"><div class="bar-fill red" id="barB" style="height:0%"></div></div>
+      <div class="agent-label red">Agent B</div>
+    </div>
+  </div>
+  <div class="winner-text" id="winnerText"></div>
+  <div class="stats-grid" id="statsGrid"></div>
+  <div class="scoreboard-actions">
+    <button onclick="App.revealBugs()" id="btnReveal">Reveal Ground Truth</button>
+    <button class="primary" onclick="App.goLobby()">Play Again</button>
+  </div>
+</div>
+
+<!-- ═══════════ OVERLAYS ═══════════ -->
+<div class="phase-overlay" id="phaseOverlay">
+  <h2 id="phaseOverlayTitle"></h2>
+  <p id="phaseOverlayDesc"></p>
+</div>
+
+<div class="flag-dialog-overlay" id="flagDialogOverlay">
+  <div class="flag-dialog">
+    <h3>Flag Issue at <span id="flagDialogLocation"></span></h3>
+    <div class="field">
+      <label>Severity</label>
+      <div class="severity-pills">
+        <button class="sev-pill selected" data-sev="critical" onclick="App.play.pickSev(this)">Critical</button>
+        <button class="sev-pill" data-sev="major" onclick="App.play.pickSev(this)">Major</button>
+        <button class="sev-pill" data-sev="minor" onclick="App.play.pickSev(this)">Minor</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>Issue Type</label>
+      <select id="flagIssueType" style="width:100%;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;">
+        <option value="logic_error">Logic Error</option>
+        <option value="security">Security Vulnerability</option>
+        <option value="off_by_one">Off-by-one</option>
+        <option value="type_error">Type Error</option>
+        <option value="performance_issue">Performance Issue</option>
+        <option value="memory_leak">Memory Leak</option>
+        <option value="architecture">Architecture Issue</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Description</label>
+      <textarea id="flagDesc" placeholder="Describe the issue..."></textarea>
+    </div>
+    <div class="actions">
+      <button onclick="App.play.cancelFlag()">Cancel</button>
+      <button class="primary" onclick="App.play.confirmFlag()">Flag It</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const App = {
+  mode: 'watch',       // 'watch' | 'play'
+  screen: 'lobby',
+  episodeId: '',
+  task: 'bug_hunt',
+  phase: 'round_1',
+  totalSteps: 0,
+  agentA: { flags: [], score: 0, done: false, info: {} },
+  agentB: { flags: [], score: 0, done: false, info: {} },
+  files: [],           // file names
+  fileContents: {},    // { filename: raw content string }
+  currentFile: '',
+  groundTruth: null,   // set after reveal
+  flagMarkers: {},     // { "file:line": [{agent:'A'|'B'|'truth', sev:'...'}] }
+  _loopTimer: null,
+  _playBTimer: null,
+
+  // ── Helpers ──────────────────────────────────────────────────────────
+
+  selectTask(btn) {
+    document.querySelectorAll('.task-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    App.task = btn.dataset.task;
+  },
+
+  showScreen(name) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(name).classList.add('active');
+    App.screen = name;
+  },
+
+  goLobby() {
+    App.showScreen('lobby');
+    App.groundTruth = null;
+    App.flagMarkers = {};
+  },
+
+  log(msg, agent) {
+    const el = document.getElementById('logPanel');
+    const cls = agent === 'A' ? 'agent-a' : agent === 'B' ? 'agent-b' : '';
+    el.innerHTML += `<div class="log-entry"><span class="${cls}">${agent ? `[${agent}]` : '[SYS]'}</span> ${App._esc(msg)}</div>`;
+    el.scrollTop = el.scrollHeight;
+  },
+
+  _esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; },
+
+  _genId() { return 'ep_' + Math.random().toString(36).slice(2, 10); },
+
+  // ── API layer ────────────────────────────────────────────────────────
+
+  api: {
+    async reset(episodeId, task, agentId) {
+      const r = await fetch('/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ episode_id: episodeId, task, agent_id: agentId })
+      });
+      return r.json();
+    },
+    async step(episodeId, agentId, action) {
+      const r = await fetch('/step', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ episode_id: episodeId, agent_id: agentId, action })
+      });
+      return r.json();
+    },
+    async autoStep(episodeId, agentId) {
+      const r = await fetch('/api/auto-step', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ episode_id: episodeId, agent_id: agentId })
+      });
+      return r.json();
+    },
+    async revealBugs(episodeId) {
+      const r = await fetch('/api/reveal-bugs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ episode_id: episodeId })
+      });
+      return r.json();
+    }
+  },
+
+  // ── UI updates ───────────────────────────────────────────────────────
+
+  ui: {
+    updateHeader() {
+      const phaseMap = { round_1: 'ROUND 1', cross_review: 'CROSS REVIEW', round_2: 'ROUND 2', finished: 'FINISHED' };
+      document.getElementById('phaseBadge').textContent = phaseMap[App.phase] || App.phase;
+      document.getElementById('stepInfo').textContent = `Steps: ${App.totalSteps}`;
+      const taskNames = { bug_hunt: 'Bug Hunt', security_audit: 'Security Audit', architecture_review: 'Architecture Review' };
+      document.getElementById('taskTitle').textContent = taskNames[App.task] || App.task;
+    },
+
+    updateAgent(id, data) {
+      const agent = id === 'A' ? App.agentA : App.agentB;
+      const obs = data.observation || {};
+      const info = data.info || {};
+
+      if (obs.my_flags) agent.flags = obs.my_flags;
+      if (data.done) { agent.done = true; agent.score = data.reward; agent.info = info; }
+
+      document.getElementById('flagCount' + id).textContent = agent.flags.length;
+      document.getElementById('status' + id).textContent = agent.done ? 'done' : (obs.phase === 'cross_review' ? 'waiting' : 'reviewing');
+
+      // Update flag list
+      const list = document.getElementById('flagList' + id);
+      list.innerHTML = '';
+      agent.flags.forEach(f => {
+        const chip = document.createElement('div');
+        chip.className = `flag-chip ${f.severity || ''}`;
+        chip.textContent = `${f.file_path}:${f.line_number} [${f.severity}]`;
+        chip.title = f.description || '';
+        list.appendChild(chip);
+      });
+
+      // Update flag markers
+      agent.flags.forEach(f => {
+        const key = `${f.file_path}:${f.line_number}`;
+        if (!App.flagMarkers[key]) App.flagMarkers[key] = [];
+        const agLetter = id;
+        if (!App.flagMarkers[key].some(m => m.agent === agLetter))
+          App.flagMarkers[key].push({ agent: agLetter, sev: f.severity });
+      });
+
+      // Set files available
+      if (obs.files_available && obs.files_available.length) {
+        App.files = obs.files_available;
+        App.ui.renderFileTabs();
+      }
+
+      // If we got file_content, cache it
+      if (obs.current_file && obs.file_content) {
+        App.fileContents[obs.current_file] = obs.file_content;
+        if (!App.currentFile || App.currentFile === obs.current_file) {
+          App.currentFile = obs.current_file;
+          App.ui.renderCode();
+        }
+      }
+    },
+
+    renderFileTabs() {
+      const container = document.getElementById('fileTabs');
+      container.innerHTML = '';
+      App.files.forEach(f => {
+        const tab = document.createElement('div');
+        tab.className = 'file-tab' + (f === App.currentFile ? ' active' : '');
+        tab.textContent = f.split('/').pop();
+        tab.title = f;
+        tab.onclick = () => {
+          App.currentFile = f;
+          App.ui.renderFileTabs();
+          if (App.mode === 'play' && !App.fileContents[f]) {
+            App.play.readFile(f);
+          } else {
+            App.ui.renderCode();
+          }
+        };
+        container.appendChild(tab);
+      });
+    },
+
+    renderCode() {
+      const viewer = document.getElementById('codeViewer');
+      const raw = App.fileContents[App.currentFile];
+      if (!raw) {
+        viewer.innerHTML = '<div style="padding:40px;color:var(--text-dim);text-align:center;">Select a file tab to view code</div>';
+        return;
+      }
+      // Parse numbered content (e.g. "  1: def foo():")
+      const lines = raw.split('\n');
+      let html = '';
+      lines.forEach((line, idx) => {
+        // Extract line number from formatted content "  N: code"
+        const m = line.match(/^\s*(\d+):\s?(.*)/);
+        const lineNum = m ? parseInt(m[1]) : idx + 1;
+        const code = m ? m[2] : line;
+        const key = `${App.currentFile}:${lineNum}`;
+        const markers = App.flagMarkers[key] || [];
+
+        let lineClass = 'code-line';
+        if (markers.some(m => m.agent === 'truth')) lineClass += ' flagged-truth';
+        else if (markers.some(m => m.agent === 'A')) lineClass += ' flagged-a';
+        else if (markers.some(m => m.agent === 'B')) lineClass += ' flagged-b';
+        if (App.mode === 'play' && !App.agentA.done) lineClass += ' clickable';
+
+        let markerHtml = '';
+        markers.forEach(mk => {
+          const cls = mk.agent === 'A' ? 'blue' : mk.agent === 'B' ? 'red' : 'green';
+          markerHtml += `<span class="marker ${cls}"></span>`;
+        });
+
+        html += `<div class="${lineClass}" data-line="${lineNum}" data-file="${App.currentFile}">`;
+        html += `<div class="gutter"><div class="markers">${markerHtml}</div>${lineNum}</div>`;
+        html += `<div class="code-text">${App._esc(code)}</div>`;
+        html += `</div>`;
+      });
+      viewer.innerHTML = html;
+
+      // In play mode, clicking lines opens flag dialog
+      if (App.mode === 'play' && !App.agentA.done) {
+        viewer.querySelectorAll('.code-line.clickable').forEach(el => {
+          el.addEventListener('click', () => {
+            const ln = parseInt(el.dataset.line);
+            const fl = el.dataset.file;
+            App.play.openFlagDialog(fl, ln);
+          });
+        });
+      }
+    },
+
+    showPhaseOverlay(title, desc) {
+      document.getElementById('phaseOverlayTitle').textContent = title;
+      document.getElementById('phaseOverlayDesc').textContent = desc;
+      document.getElementById('phaseOverlay').classList.add('visible');
+      setTimeout(() => document.getElementById('phaseOverlay').classList.remove('visible'), 2200);
+    },
+
+    renderScoreboard() {
+      const a = App.agentA, b = App.agentB;
+      const aScore = a.info.final_score || a.score || 0;
+      const bScore = b.info.final_score || b.score || 0;
+      const aPct = Math.round(aScore * 100);
+      const bPct = Math.round(bScore * 100);
+
+      document.getElementById('scoreValA').textContent = aPct + '%';
+      document.getElementById('scoreValB').textContent = bPct + '%';
+      setTimeout(() => {
+        document.getElementById('barA').style.height = Math.max(aPct, 2) + '%';
+        document.getElementById('barB').style.height = Math.max(bPct, 2) + '%';
+      }, 100);
+
+      let winner;
+      if (Math.abs(aScore - bScore) < 0.001) winner = "It's a Tie!";
+      else if (aScore > bScore) winner = App.mode === 'play' ? 'You Win!' : 'Agent A Wins!';
+      else winner = App.mode === 'play' ? 'Agent B Wins!' : 'Agent B Wins!';
+      document.getElementById('winnerText').innerHTML = `<span class="winner-name">${winner}</span>`;
+
+      const grid = document.getElementById('statsGrid');
+      grid.innerHTML = `
+        <div>Agent A Bugs Found: <b>${a.info.bugs_found || 0}/${a.info.total_bugs || '?'}</b></div>
+        <div>Agent B Bugs Found: <b>${b.info.bugs_found || 0}/${b.info.total_bugs || '?'}</b></div>
+        <div>Agent A Flags: <b>${a.info.flags_submitted || a.flags.length}</b></div>
+        <div>Agent B Flags: <b>${b.info.flags_submitted || b.flags.length}</b></div>
+        <div>Agent A R1 Score: <b>${((a.info.round1_score || 0) * 100).toFixed(0)}%</b></div>
+        <div>Agent B R1 Score: <b>${((b.info.round1_score || 0) * 100).toFixed(0)}%</b></div>
+        <div>Agent A Final: <b>${aPct}%</b></div>
+        <div>Agent B Final: <b>${bPct}%</b></div>
+      `;
+
+      App.showScreen('scoreboard');
+    }
+  },
+
+  // ── Watch Mode ───────────────────────────────────────────────────────
+
+  match: {
+    async start() {
+      App.mode = 'watch';
+      App._reset();
+      App.showScreen('match');
+      document.getElementById('actionBar').classList.remove('visible');
+      App.log('Starting watch mode — ' + App.task, null);
+
+      App.episodeId = App._genId();
+      try {
+        const rA = await App.api.reset(App.episodeId, App.task, 'A');
+        App.ui.updateAgent('A', rA);
+        const rB = await App.api.reset(App.episodeId, App.task, 'B');
+        App.ui.updateAgent('B', rB);
+        App.phase = rA.observation?.phase || 'round_1';
+        App.ui.updateHeader();
+
+        // Auto-read the first file to show code
+        if (App.files.length > 0) {
+          App.currentFile = App.files[0];
+          App.ui.renderFileTabs();
+        }
+
+        App.ui.showPhaseOverlay('ROUND 1', 'Agents independently review the code');
+        setTimeout(() => App.match.runLoop(), 2500);
+      } catch (e) {
+        App.log('Error: ' + e.message, null);
+      }
+    },
+
+    async runLoop() {
+      if (App.screen !== 'match') return;
+      if (App.agentA.done && App.agentB.done) {
+        App.ui.renderScoreboard();
+        return;
+      }
+
+      const agents = [];
+      if (!App.agentA.done) agents.push('A');
+      if (!App.agentB.done) agents.push('B');
+
+      for (const ag of agents) {
+        if (App.screen !== 'match') return;
+        try {
+          const res = await App.api.autoStep(App.episodeId, ag);
+          App.totalSteps++;
+          App.ui.updateAgent(ag, res);
+          App.ui.updateHeader();
+
+          const obs = res.observation || {};
+          const act = obs.last_action_result || '';
+          App.log(act.substring(0, 80), ag);
+
+          // Detect phase transition
+          const newPhase = obs.phase;
+          if (newPhase && newPhase !== App.phase) {
+            App.phase = newPhase;
+            App.ui.updateHeader();
+            const overlays = {
+              cross_review: ['CROSS REVIEW', 'Agents exchange their Round 1 findings'],
+              round_2: ['ROUND 2', 'Learn from your opponent and adapt!'],
+              finished: ['MATCH COMPLETE', 'Calculating final scores...']
+            };
+            if (overlays[newPhase]) {
+              App.ui.showPhaseOverlay(overlays[newPhase][0], overlays[newPhase][1]);
+            }
+          }
+
+          // Re-render code to show new markers
+          App.ui.renderCode();
+
+          await new Promise(r => setTimeout(r, 600));
+        } catch (e) {
+          App.log('Error: ' + e.message, ag);
+        }
+      }
+
+      // Continue loop
+      App._loopTimer = setTimeout(() => App.match.runLoop(), 200);
+    }
+  },
+
+  // ── Play Mode ────────────────────────────────────────────────────────
+
+  play: {
+    _flagFile: '', _flagLine: 0, _flagSev: 'critical',
+
+    async start() {
+      App.mode = 'play';
+      App._reset();
+      App.showScreen('match');
+      document.getElementById('actionBar').classList.add('visible');
+      App.log('Play mode — you are Agent A!', null);
+
+      App.episodeId = App._genId();
+      try {
+        const rA = await App.api.reset(App.episodeId, App.task, 'A');
+        App.ui.updateAgent('A', rA);
+        const rB = await App.api.reset(App.episodeId, App.task, 'B');
+        App.ui.updateAgent('B', rB);
+        App.phase = rA.observation?.phase || 'round_1';
+        App.ui.updateHeader();
+
+        if (App.files.length > 0) {
+          App.currentFile = App.files[0];
+          App.ui.renderFileTabs();
+          // Auto-read first file for the player
+          await App.play.readFile(App.files[0]);
+        }
+
+        App.ui.showPhaseOverlay('ROUND 1', 'Read the code. Click lines to flag bugs!');
+
+        // Start Agent B auto-play in background
+        App.play._startAgentB();
+      } catch (e) {
+        App.log('Error: ' + e.message, null);
+      }
+    },
+
+    _startAgentB() {
+      App._playBTimer = setInterval(async () => {
+        if (App.agentB.done || App.screen !== 'match') {
+          clearInterval(App._playBTimer);
+          return;
+        }
+        try {
+          const res = await App.api.autoStep(App.episodeId, 'B');
+          App.ui.updateAgent('B', res);
+          const obs = res.observation || {};
+          App.log((obs.last_action_result || '').substring(0, 60), 'B');
+
+          const newPhase = obs.phase;
+          if (newPhase && newPhase !== App.phase) {
+            App.phase = newPhase;
+            App.ui.updateHeader();
+            if (newPhase === 'round_2') {
+              App.ui.showPhaseOverlay('ROUND 2', 'Review opponent findings and improve!');
+            }
+          }
+          App.ui.renderCode();
+        } catch (e) { /* ignore background errors */ }
+      }, 2000);
+    },
+
+    async readFile(fname) {
+      try {
+        const res = await App.api.step(App.episodeId, 'A', { action_type: 'read_file', file_path: fname });
+        App.totalSteps++;
+        App.ui.updateAgent('A', res);
+        App.ui.updateHeader();
+        const obs = res.observation || {};
+        if (obs.current_file && obs.file_content) {
+          App.fileContents[obs.current_file] = obs.file_content;
+          App.currentFile = obs.current_file;
+          App.ui.renderFileTabs();
+          App.ui.renderCode();
+        }
+        App.log('Read ' + fname, 'A');
+      } catch (e) {
+        App.log('Error reading file: ' + e.message, 'A');
+      }
+    },
+
+    openFlagDialog(file, line) {
+      if (App.agentA.done) return;
+      App.play._flagFile = file;
+      App.play._flagLine = line;
+      App.play._flagSev = 'critical';
+      document.getElementById('flagDialogLocation').textContent = file.split('/').pop() + ':' + line;
+      document.querySelectorAll('.sev-pill').forEach(p => p.classList.toggle('selected', p.dataset.sev === 'critical'));
+      document.getElementById('flagDesc').value = '';
+      document.getElementById('flagDialogOverlay').classList.add('visible');
+    },
+
+    pickSev(btn) {
+      document.querySelectorAll('.sev-pill').forEach(p => p.classList.remove('selected'));
+      btn.classList.add('selected');
+      App.play._flagSev = btn.dataset.sev;
+    },
+
+    cancelFlag() {
+      document.getElementById('flagDialogOverlay').classList.remove('visible');
+    },
+
+    async confirmFlag() {
+      document.getElementById('flagDialogOverlay').classList.remove('visible');
+      const action = {
+        action_type: 'flag_issue',
+        file_path: App.play._flagFile,
+        line_number: App.play._flagLine,
+        issue_type: document.getElementById('flagIssueType').value,
+        severity: App.play._flagSev,
+        description: document.getElementById('flagDesc').value || 'Flagged by player'
+      };
+      try {
+        const res = await App.api.step(App.episodeId, 'A', action);
+        App.totalSteps++;
+        App.ui.updateAgent('A', res);
+        App.ui.updateHeader();
+        App.ui.renderCode();
+        App.log(`Flagged ${action.file_path}:${action.line_number} [${action.severity}]`, 'A');
+      } catch (e) {
+        App.log('Error flagging: ' + e.message, 'A');
+      }
+    },
+
+    async submitRound() {
+      try {
+        const res = await App.api.step(App.episodeId, 'A', { action_type: 'submit_round' });
+        App.totalSteps++;
+        App.ui.updateAgent('A', res);
+        const obs = res.observation || {};
+        const newPhase = obs.phase;
+        if (newPhase && newPhase !== App.phase) {
+          App.phase = newPhase;
+          App.ui.updateHeader();
+          if (newPhase === 'round_2') {
+            App.ui.showPhaseOverlay('ROUND 2', 'Review opponent findings and improve!');
+          } else if (newPhase === 'cross_review') {
+            App.ui.showPhaseOverlay('CROSS REVIEW', 'Waiting for Agent B to finish round 1...');
+          }
+        }
+        App.ui.renderCode();
+        App.log('Submitted Round 1', 'A');
+        document.getElementById('playStatus').textContent = 'Round 1 submitted. Flag more bugs or submit final.';
+      } catch (e) {
+        App.log('Error: ' + e.message, 'A');
+      }
+    },
+
+    async submitFinal() {
+      try {
+        const res = await App.api.step(App.episodeId, 'A', { action_type: 'submit_final' });
+        App.totalSteps++;
+        App.ui.updateAgent('A', res);
+        const obs = res.observation || {};
+        App.phase = obs.phase || App.phase;
+        App.ui.updateHeader();
+        App.log(`Final submitted — score: ${(res.reward * 100).toFixed(0)}%`, 'A');
+
+        // Wait for Agent B to finish
+        document.getElementById('playStatus').textContent = 'Waiting for Agent B to finish...';
+        App.play._waitForEnd();
+      } catch (e) {
+        App.log('Error: ' + e.message, 'A');
+      }
+    },
+
+    _waitForEnd() {
+      const check = setInterval(async () => {
+        if (App.agentA.done && App.agentB.done) {
+          clearInterval(check);
+          App.phase = 'finished';
+          App.ui.showPhaseOverlay('MATCH COMPLETE', 'Calculating scores...');
+          setTimeout(() => App.ui.renderScoreboard(), 2400);
+        }
+      }, 500);
+      // Timeout after 30s
+      setTimeout(() => clearInterval(check), 30000);
+    }
+  },
+
+  // ── Reveal ground truth ──────────────────────────────────────────────
+
+  async revealBugs() {
+    try {
+      const data = await App.api.revealBugs(App.episodeId);
+      App.groundTruth = data.bugs || [];
+      App.fileContents = {};
+      // Parse returned files
+      if (data.files) {
+        for (const [fname, content] of Object.entries(data.files)) {
+          // Format with line numbers like the environment does
+          const numbered = content.split('\n').map((line, i) => `${String(i+1).padStart(3)}: ${line}`).join('\n');
+          App.fileContents[fname] = numbered;
+        }
+      }
+      // Add truth markers
+      App.groundTruth.forEach(bug => {
+        const key = `${bug.file}:${bug.line}`;
+        if (!App.flagMarkers[key]) App.flagMarkers[key] = [];
+        if (!App.flagMarkers[key].some(m => m.agent === 'truth'))
+          App.flagMarkers[key].push({ agent: 'truth', sev: bug.severity || 'major' });
+      });
+
+      // Show match screen with truth markers
+      App.showScreen('match');
+      document.getElementById('actionBar').classList.remove('visible');
+      App.files = Object.keys(App.fileContents);
+      if (App.files.length) {
+        App.currentFile = App.files[0];
+        App.ui.renderFileTabs();
+        App.ui.renderCode();
+      }
+      App.log(`Revealed ${App.groundTruth.length} ground truth bugs (green markers)`, null);
+    } catch (e) {
+      App.log('Error revealing bugs: ' + e.message, null);
+    }
+  },
+
+  // ── Internal reset ───────────────────────────────────────────────────
+
+  _reset() {
+    App.agentA = { flags: [], score: 0, done: false, info: {} };
+    App.agentB = { flags: [], score: 0, done: false, info: {} };
+    App.files = [];
+    App.fileContents = {};
+    App.currentFile = '';
+    App.groundTruth = null;
+    App.flagMarkers = {};
+    App.totalSteps = 0;
+    App.phase = 'round_1';
+    if (App._loopTimer) clearTimeout(App._loopTimer);
+    if (App._playBTimer) clearInterval(App._playBTimer);
+    document.getElementById('logPanel').innerHTML = '';
+    document.getElementById('flagListA').innerHTML = '';
+    document.getElementById('flagListB').innerHTML = '';
+    document.getElementById('flagCountA').textContent = '0';
+    document.getElementById('flagCountB').textContent = '0';
+    document.getElementById('statusA').textContent = 'reviewing';
+    document.getElementById('statusB').textContent = 'reviewing';
+    document.getElementById('codeViewer').innerHTML = '';
+    document.getElementById('fileTabs').innerHTML = '';
+    // Reset scoreboard bars
+    document.getElementById('barA').style.height = '0%';
+    document.getElementById('barB').style.height = '0%';
+  }
+};
+</script>
+</body>
+</html>

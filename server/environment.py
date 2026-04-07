@@ -237,12 +237,12 @@ def reset(episode_id: str, task: str, agent_id: str, seed: int | None = None) ->
                 "task": task_data,
                 "phase": "round_1",
                 "task_name": task_data["name"],
-                "A": {"flags": [], "r1_flags": [], "ready": False, "done": False, "step_count": 0},
-                "B": {"flags": [], "r1_flags": [], "ready": False, "done": False, "step_count": 0},
+                "A": {"flags": [], "r1_flags": [], "ready": False, "done": False, "step_count": 0, "r1_score": 0.0},
+                "B": {"flags": [], "r1_flags": [], "ready": False, "done": False, "step_count": 0, "r1_score": 0.0},
             }
         ep = _episodes[episode_id]
         # Re-init this agent's state (allows reconnect)
-        ep[internal_id] = {"flags": [], "r1_flags": [], "ready": False, "done": False, "step_count": 0}
+        ep[internal_id] = {"flags": [], "r1_flags": [], "ready": False, "done": False, "step_count": 0, "r1_score": 0.0}
 
     obs = _base_obs(ep, internal_id)
     obs.last_action_result = f"Episode '{episode_id}' ready for agent {internal_id}."
