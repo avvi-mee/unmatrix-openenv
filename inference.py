@@ -53,10 +53,12 @@ def _ensure_server() -> None:
         pass
 
     # Parse port from ENV_SERVER_URL (default 8000)
+    # Always bind to 127.0.0.1 — some environments (validators, containers)
+    # lack IPv6 support and "localhost" resolves to ::1 which fails.
     from urllib.parse import urlparse
     parsed = urlparse(ENV_SERVER_URL)
-    host = parsed.hostname or "0.0.0.0"
     port = parsed.port or 8000
+    host = "127.0.0.1"
 
     print(f"[SERVER] Starting environment server on {host}:{port} ...", flush=True)
 
